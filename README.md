@@ -1,4 +1,4 @@
-# VRC 压图（AVIF / WebP / JPG）
+# VRC 压照片工具（AVIF / WebP / JPG）
 
 给 VRChat 玩家用的批量压图小工具。VRCX 开着的时候，游戏里拍的照片会把房间id、用户id写进PNG的XMP元数据里。普通压缩软件不会保留XMP数据，一压就把这些信息丢了；本工具会原样保留元数据。
 
