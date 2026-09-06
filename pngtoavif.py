@@ -2,6 +2,7 @@
 """AVIF / WebP / JPG batch converter with a compact modern GUI."""
 
 import os
+import re
 import threading
 import multiprocessing as mp
 from tkinter import filedialog, messagebox
@@ -51,6 +52,25 @@ def _extract_meta(img):
         desc = str(desc)
     return xmp, desc
 
+def _xmp_time(xmp):
+    """从 XMP 文本中提取拍摄/创建时间（属性或元素两种形式）。"""
+    if not xmp:
+        return None
+    for pat in (r'xmp:CreateDate="([^"]+)"', r'<xmp:CreateDate>([^<]+)<',
+                r'photoshop:DateCreated="([^"]+)"', r'exif:DateTimeOriginal="([^"]+)"',
+                r'xmp:ModifyDate="([^"]+)"', r'<xmp:ModifyDate>([^<]+)<'):
+        m = re.search(pat, xmp)
+        if m:
+            return m.group(1)
+    return None
+
+def _to_exif_time(value):
+    # "2026-09-06T02:08:37.0140857+08:00" -> "2026:09:06 02:08:37"
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})', str(value))
+    if not m:
+        return None
+    return f"{m.group(1)}:{m.group(2)}:{m.group(3)} {m.group(4)}:{m.group(5)}:{m.group(6)}"
+
 def _build_xmp(xmp, desc):
     if not xmp and not desc:
         return None
@@ -78,6 +98,7 @@ def convert_one(args):
      keep_meta, keep_alpha) = args
     try:
         src_size = os.path.getsize(src)
+        src_stat = os.stat(src)
         with Image.open(src) as im:
             has_alpha = getattr(im, "has_transparency_data", False) or im.mode == "RGBA"
             if fmt == "JPG" or not (keep_alpha and has_alpha):
@@ -130,6 +151,19 @@ def convert_one(args):
                     if not exif:
                         exifobj = im.getexif()
                         exif = exifobj.tobytes() if exifobj else None
+                    if not exif:
+                        # VRChat 截图没有 EXIF，拍摄时间只存在于 XMP CreateDate 和
+                        # 文件修改时间里；不补写 EXIF 的话，只认 EXIF 的看图软件会把
+                        # 转换时刻（新生成文件的 mtime）当成拍摄时间
+                        t = (_to_exif_time(_xmp_time(full_xmp))
+                             or datetime.fromtimestamp(src_stat.st_mtime).strftime("%Y:%m:%d %H:%M:%S"))
+                        if t:
+                            exifobj = Image.Exif()
+                            exifobj[306] = t            # DateTime
+                            sub_ifd = exifobj.get_ifd(0x8769)
+                            sub_ifd[36867] = t          # DateTimeOriginal
+                            sub_ifd[36868] = t          # DateTimeDigitized
+                            exif = exifobj.tobytes()
                     if exif:
                         if fmt == "JPG":
                             # JPEG 的 EXIF 必须带 Exif\0\0 头，否则写出无效数据
@@ -145,6 +179,12 @@ def convert_one(args):
                 kwargs["icc_profile"] = b""
             save_fmt = "JPEG" if fmt == "JPG" else fmt
             frame.save(dst, format=save_fmt, **kwargs)
+        # 同步源文件时间戳：没有 EXIF 的截图，图库按文件修改时间排序/显示拍摄时间，
+        # 新生成文件的 mtime 是转换时刻，会让照片时间线错乱
+        try:
+            os.utime(dst, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+        except Exception:
+            pass
         return True, src, dst, src_size, os.path.getsize(dst), "OK"
     except Exception as exc:
         try:
