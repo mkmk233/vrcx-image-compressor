@@ -10,7 +10,6 @@ from queue import Queue, Empty
 from datetime import datetime
 
 import customtkinter as ctk
-import pywinstyles
 from PIL import Image
 
 APP_NAME = "AVIF / WebP / JPG Converter"
@@ -21,14 +20,15 @@ INPUT_EXTS = {
     ".gif", ".ppm", ".pgm", ".pbm", ".pnm",
 }
 
-BG = "#0f1117"
-SURFACE = "#171a24"
-SURFACE2 = "#212536"
-SURFACE3 = "#2b3044"
+# 统一深色系：整体底色、卡片、控件用同一色温(偏冷灰蓝)，不再混黑
+BG = "#16181d"        # 窗口内容区底色
+SURFACE = "#1f232b"   # 卡片
+SURFACE2 = "#282d37"  # 控件/输入框
+SURFACE3 = "#333945"  # 悬停/激活
 ACCENT = "#7c6ff0"
 ACCENT_HOVER = "#9488ff"
-TEXT = "#f2f4fb"
-TEXT_DIM = "#9aa0b4"
+TEXT = "#eef1f7"
+TEXT_DIM = "#9aa2b5"
 OK = "#5ec98f"
 ERR = "#e06c75"
 SUBSAMPLINGS = ("4:2:0", "4:2:2", "4:4:4")
@@ -165,13 +165,47 @@ def center_window(win, width, height):
     y = max(0, (screen_h - height) // 2)
     win.geometry(f"{width}x{height}+{x}+{y}")
 
+
+def _apply_dark_titlebar(win):
+    """染暗 Windows 标题栏，使标题栏颜色匹配内容区深色色板，消除割裂感。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        dwmapi = ctypes.windll.dwmapi
+        # Tk 窗口实际 HWND 是其子窗口的父窗口
+        hwnd = user32.GetParent(win.winfo_id()) or win.winfo_id()
+
+        def set_attr(attr, value, vtype):
+            try:
+                v = vtype(value)
+                return dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+            except Exception:
+                return -1
+
+        TRUE = ctypes.c_int(1)
+        # 深色标题栏 (Win10 2004+ = 20，旧版 = 19)
+        for attr in (20, 19):
+            if set_attr(attr, 1, ctypes.c_int) == 0:
+                break
+        # 标题栏文字/按钮用浅色（随深色模式）
+        set_attr(20, 1, ctypes.c_int)
+        # 自定义标题栏背景色与边框色，匹配 BG 色板（ABGR 十六进制）
+        # RGB(BG) = #16181d
+        caption_color = 0x1D1816  # 0x00BBGGRR
+        set_attr(35, caption_color, ctypes.c_int)  # DWMWA_CAPTION_COLOR
+        set_attr(34, caption_color, ctypes.c_int)  # DWMWA_BORDER_COLOR
+    except Exception:
+        pass
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         ctk.set_appearance_mode("dark")
         self.title("AVIF / WebP / JPG 批量转换器")
-        self.minsize(980, 760)
-        self.configure(fg_color="#000001")
+        self.minsize(900, 700)
+        self.configure(fg_color=BG)
         center_window(self, 1020, 780)
         try:
             icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
@@ -179,11 +213,7 @@ class App(ctk.CTk):
                 self.iconbitmap(icon)
         except Exception:
             pass
-        try:
-            pywinstyles.apply_style(self, "acrylic")
-            self.attributes("-transparentcolor", "#000001")
-        except Exception:
-            pass
+        _apply_dark_titlebar(self)
 
         self.files = []
         self.out_dir = ""
@@ -204,12 +234,31 @@ class App(ctk.CTk):
         self.mono_font = ctk.CTkFont(family="Consolas", size=12)
 
         self._build_ui()
+        # 布局完成后强制按设定尺寸显示，避免被滚动区内高内容撑大窗口
+        self._clamp_window_size()
+        self._clamp_loop()
         self.after(80, self._drain_queue)
-        self.after(250, lambda: pywinstyles.apply_style(self, "acrylic"))
+
+    def _clamp_window_size(self):
+        """强制窗口保持在设定尺寸，阻止 CTkScrollableFrame 的内容高度撑破窗口。"""
+        try:
+            self.update_idletasks()
+            w, h = 1020, 820
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            h = min(h, sh - 80)
+            self.geometry(f"{w}x{h}+{max(0, (sw - w)//2)}+{max(0, (sh - h)//2-20)}")
+        except Exception:
+            pass
+
+    def _clamp_loop(self):
+        """期间反复约束窗口尺寸，抵消内容撑大带来的抖动。"""
+        self._clamp_window_size()
+        self.after(120, self._clamp_loop)
 
     def _card(self, parent):
         return ctk.CTkFrame(parent, corner_radius=16, fg_color=SURFACE,
-                            border_width=1, border_color="#2b3144")
+                            border_width=1, border_color=SURFACE3)
 
     def _ghost_button(self, parent, text, command, width=118):
         return ctk.CTkButton(parent, text=text, command=command, width=width, height=36,
@@ -226,10 +275,16 @@ class App(ctk.CTk):
         return ctk.CTkSegmentedButton(parent, **kwargs)
 
     def _build_ui(self):
+        # 左右两列：col0=设置(可滚)  col1=进度(固定)  row1=footer(横跨)
+        self.grid_columnconfigure(0, weight=1)      # 左列占剩余宽度
+        self.grid_columnconfigure(1, weight=0)      # 右列固定宽度
+        self.grid_rowconfigure(0, weight=1)          # 内容区占用剩余高度
+        self.grid_rowconfigure(1, weight=0)          # footer 固定
+
         # Footer first so the start button cannot be pushed off-screen.
         foot = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=84)
-        foot.pack(side="bottom", fill="x")
-        foot.pack_propagate(False)
+        foot.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        foot.grid_propagate(False)
         inner = ctk.CTkFrame(foot, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=22, pady=16)
         self.start_btn_bottom = ctk.CTkButton(
@@ -242,8 +297,14 @@ class App(ctk.CTk):
         self.hint = ctk.CTkLabel(inner, text="先添加文件，再点开始转换。", font=self.small_font, text_color=TEXT_DIM)
         self.hint.pack(side="right")
 
-        wrap = ctk.CTkScrollableFrame(self, fg_color="transparent", corner_radius=0)
-        wrap.pack(side="top", fill="both", expand=True, padx=22, pady=(16, 8))
+        # 左列：标题 + 输入 + 设置，放进滚动区（内容多时可滚）
+        wrap_host = ctk.CTkFrame(self, fg_color="transparent")
+        wrap_host.grid(row=0, column=0, sticky="nsew", padx=(22, 8), pady=(16, 4))
+        wrap_host.grid_propagate(False)
+        wrap = ctk.CTkScrollableFrame(wrap_host, fg_color="transparent", corner_radius=0)
+        wrap.pack(fill="both", expand=True)
+        self._wrap = wrap
+        self._wrap_host = wrap_host  # 供滚动状态复用
 
         head = ctk.CTkFrame(wrap, fg_color="transparent")
         head.pack(fill="x", pady=(0, 12))
@@ -326,8 +387,9 @@ class App(ctk.CTk):
         self.subs_seg = self._seg(self.subs_row, SUBSAMPLINGS, self._on_subsampling, width=240)
         self.subs_seg.set("4:2:0")
         self.subs_seg.pack(side="left", padx=12)
-        ctk.CTkLabel(self.subs_row, text="4:2:0 体积最小；4:4:4 无色彩压缩，消除彩色边缘发糊",
-                     font=self.small_font, text_color=TEXT_DIM).pack(side="left", padx=(16, 0))
+        self.subs_hint = ctk.CTkLabel(c2, text="4:2:0 体积最小；4:2:2 兼顾；4:4:4 无色彩压缩，可消除放大后的彩色边缘发糊。",
+                                      font=self.small_font, text_color=TEXT_DIM)
+        self.subs_hint.pack(anchor="w", padx=(0, 0), pady=(2, 0))
 
         # 速度（1 最慢·压缩最好，10 最快）
         effrow = ctk.CTkFrame(c2, fg_color="transparent")
@@ -385,8 +447,11 @@ class App(ctk.CTk):
             side="left", fill="x", expand=True, padx=12)
         self._ghost_button(outrow, "浏览", self.choose_out, width=86).pack(side="left")
 
-        progress_card = self._card(wrap)
-        progress_card.pack(fill="both", expand=True)
+        # 右列：转换进度固定在右侧独立一列，始终可见（不需要滚动）
+        progress_card = self._card(self)
+        progress_card.configure(width=360)
+        progress_card.grid(row=0, column=1, sticky="nsew", padx=(8, 22), pady=(16, 4))
+        progress_card.grid_propagate(False)
         c3 = ctk.CTkFrame(progress_card, fg_color="transparent")
         c3.pack(fill="both", expand=True, padx=16, pady=14)
         prowt = ctk.CTkFrame(c3, fg_color="transparent")
@@ -397,7 +462,7 @@ class App(ctk.CTk):
         self.progress = ctk.CTkProgressBar(c3, progress_color=ACCENT, height=10)
         self.progress.set(0)
         self.progress.pack(fill="x", pady=(12, 12))
-        self.log = ctk.CTkTextbox(c3, height=140, corner_radius=12, fg_color=SURFACE2, text_color=TEXT_DIM, font=self.mono_font)
+        self.log = ctk.CTkTextbox(c3, corner_radius=12, fg_color=SURFACE2, text_color=TEXT_DIM, font=self.mono_font)
         self.log.tag_config("ok", foreground=OK)
         self.log.tag_config("err", foreground=ERR)
         self.log.tag_config("accent", foreground=ACCENT_HOVER)
@@ -479,8 +544,10 @@ class App(ctk.CTk):
         # 子采样：AVIF 有损与 JPG 支持
         if fmt in ("AVIF", "JPG") and not lossless:
             self.subs_row.pack(fill="x", pady=(2, 8), before=self.eff_slider.master)
+            self.subs_hint.pack(anchor="w", padx=(0, 0), pady=(2, 8), before=self.eff_slider.master)
         else:
             self.subs_row.pack_forget()
+            self.subs_hint.pack_forget()
         if fmt == "AVIF":
             hint = ("AVIF 无损：YUV 域无损编码，视觉无损（RGB 像素存在 ±3 以内取整误差，灰度图为位精确），"
                     "体积通常为 PNG 的 60–85%。") if lossless else \

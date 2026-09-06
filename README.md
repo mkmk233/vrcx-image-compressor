@@ -2,7 +2,7 @@
 
 一款带暗色现代 GUI 的批量图片转换工具，专为 **VRChat 截图/贴图** 场景优化。多进程并行编码，保留元数据，按需选择无损或高压缩率有损编码。
 
-界面包含：文件添加区（添加文件/文件夹、清空列表）、转换设置区（输出格式、编码模式、画质滑条、色度子采样、编码速度、并行数、元数据/透明通道/覆盖复选框、输出目录）、实时进度与日志区。详见下方参数说明。
+界面为**左右分栏**暗色布局：左列是文件添加区（添加文件/文件夹、清空列表）与转换设置区（输出格式、编码模式、画质滑条、色度子采样、编码速度、并行数、元数据/透明通道/覆盖复选框、输出目录），可滚动；右列是固定的转换进度区（进度条 + 实时日志），始终可见无需滚动。详见下方参数说明。
 
 ## 功能
 
@@ -57,12 +57,12 @@ pyinstaller --onefile --windowed --icon=app.ico --name AVIFBatchConverter pngtoa
 - 元数据注入：EXIF / XMP 通过 Pillow 原生 `exif` / `xmp` 参数写入；AVIF 接受 str 型 XMP，WebP / JPG 需要 UTF-8 bytes。JPG 的 EXIF 需补 `Exif\0\0` 头。
 - 剥离元数据时显式传空 ICC 以防 Pillow 回退读取源 IMG 的 ICC。
 - 速度映射：`avif_speed(effort)=effort-1`（0 最慢最好），`webp_method(effort)` 线性映射到 method 0–6。
+- 界面：标题栏通过 Windows API（DwmSetWindowAttribute 深色模式 + 自定义标题栏颜色）染暗为内容区同色系，避免系统灰色标题栏与深色内容割裂；转换进度区固定在窗口底部，无需滚动即可看到。
 
 ## 依赖
 
 - Pillow（AVIF / WebP / JPEG 编码插件，Pillow 12.3 起自带 libavif + aom）
 - customtkinter（GUI）
-- pywinstyles（Win11 云母/亚克力外观）
 
 ## License
 
