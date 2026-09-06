@@ -38,7 +38,7 @@ PNG 文件里的元数据，VRC相关的就这三种：
 
 ## 使用
 
-直接双击AVIFBatchConverter.exe
+直接双击BatchConverter_win-x64.exe
 
 界面参数：
 - **输出格式**：AVIF / WebP / JPG
