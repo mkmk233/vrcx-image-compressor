@@ -1,0 +1,5 @@
+pillow>=12.3.0
+customtkinter>=5.2.0
+
+# 打包（仅发布 exe 时需要）
+pyinstaller>=6.0
