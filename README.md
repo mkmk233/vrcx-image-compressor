@@ -51,6 +51,10 @@ PNG 文件里除了画面，还能塞几段文字信息，VRC 相关的就这三
 
 建议搭配类似photoprism或immich类似的软件实现整理分类
 
+实测画质拉到95 像素444采样的压缩率：
+<img width="1199" height="720" alt="e25b259106a40c3e16be8b71310f6009" src="https://github.com/user-attachments/assets/15df22c2-962a-4494-9bcf-4578ecae988c" />
+
+
 ## License
 
 MIT
